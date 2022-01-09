@@ -1,0 +1,662 @@
+---
+title: "STAT425_CS2_V1"
+author: "Debapratim Ghosh, Shantanu Solanki"
+date: "12/1/2021"
+output: html_document
+---
+
+## Problem Statement 
+
+In this case study, we are going to work with a study of crime rates in 47 states of the USE in 1960. The variables we have available are:<br>
+
+`M` - percentage of males aged 14–24 in total state population <br>
+`So` - indicator variable for a southern state <br>
+`Ed` - mean years of schooling of the population aged 25 years or over <br>
+`Po1` - per capita expenditure on police protection in 1960 <br>
+`Po2` - per capita expenditure on police protection in 1959 <br>
+`LF` - labour force participation rate of civilian urban males in the age group 14-24 <br>
+`M.F` - number of males per 100 females <br>
+`Pop` - state population in 1960 in hundred thousand <br>
+`NW` - percentage of nonwhites in the population <br>
+`U1` - unemployment rate of urban males 14–24 <br>
+`U2` - unemployment rate of urban males 35–39 <br>
+`wealth` - median value of transferable assets or family income <br>
+`Ineq` - income inequality: percentage of families earning below half the median income <br>
+`Prob` - probability of imprisonment: ratio of number of commitments to number of offenses <br>
+`Time` - average time in months served by offenders in state prisons before their first release <br>
+`Crime` - crime rate: number of offenses per 100,000 population in 1960
+Our goal is to find the “best” model to predict crime rate. <br>
+
+
+
+## Analysis Steps : 
+
+###  Loading Required Libraries 
+```{r, warning=FALSE, message=FALSE}
+library(dplyr)
+library(faraway)
+library(lmtest)
+library(MASS)
+
+library(car)
+
+library(Metrics)
+library(leaps)
+```
+
+
+### Reading the data
+Let us first read the data and go through the required columns :
+
+```{r}
+crime = read.table("crime.txt", header=TRUE)
+head(crime)
+```
+
+Let's look at a summary of the dataset : 
+```{r}
+summary(crime)
+str(crime)
+```
+
+All the variables in the dataset are numeric or integer. 
+
+### Fitting a full linear model with the entire dataset 
+
+In order to perform model diagnostics, we need to fit a linear model with all the predictors on the entire dataset.
+```{r}
+model.lm.full<-lm(Crime~.,data=crime)
+summary(model.lm.full)
+
+```
+
+We can see that `M`,`Ed`,`Po1`,`Ineq` and `Prob` are all significant predictors at a 5% significance level. The $R^2$ of the model is also very decent at 80%. Let's first check wheather multicollinearity is present in the model or not.Then we can check if the model is satisfies the linear model assumptions or if any remedial measures are needed. 
+
+### Checking Multicolinearity 
+
+Lets check whether some predictors are linearly dependent on one another or not. 
+
+```{r}
+library(corrplot)
+
+mat<-cor(crime)
+corrplot(mat, method="circle")
+```
+
+We can see that `Wealth` and `Ineq` are highly negatively correlated and similarly `Po1` and `Po2` are highly positively correlated .
+
+
+Let's check the presence of multicolinearity through VIF and Condition number 
+
+```{r}
+model<-model.lm.full
+
+x = model.matrix(model)[,-1]  
+
+x = x - matrix(apply(x,2, mean), dim(x)[1],dim(x)[2], byrow=TRUE)
+x = x / matrix(apply(x, 2, sd), dim(x)[1],dim(x)[2], byrow=TRUE)
+#Extracting the eigen-values:
+e = eigen(t(x) %*% x) 
+sqrt(max(e$val)/min(e$val))
+vif(model)
+```
+
+The condition number is above 30 and some predictors like `Po1`,`Po2` and `Wealth` have a VIF greater than 10. Both of these facts indicate that multicollinearity is present in the dataset. In order to accomodate that, we can remove certain variables like `Po2` and `Wealth` and check for multicollinearity again. 
+
+```{r}
+model<-lm(Crime~M+So+Ed+Po1+LF+M.F+Pop+NW+U1+U2+Ineq+Prob+Time, data=crime)
+
+x = model.matrix(model)[,-1]  
+dim(x)[1]
+x = x - matrix(apply(x,2, mean), dim(x)[1],dim(x)[2], byrow=TRUE)
+x = x / matrix(apply(x, 2, sd), dim(x)[1],dim(x)[2], byrow=TRUE)
+#Extracting the eigen-values:
+e = eigen(t(x) %*% x) 
+sqrt(max(e$val)/min(e$val))
+vif(model)
+```
+The condition number is much less than 30 now and none of the predictors have a VIF greater than 10. So we can move forward with the reduced model with removed features.
+
+```{r}
+model.lm.red<-lm(Crime~M+So+Ed+Po1+LF+M.F+Pop+NW+U1+U2+Ineq+Prob+Time, data=crime)
+summary(model.lm.red)
+```
+
+We can observe that after removing the linearly dependent predictors, while $R^2$ has reduced to 79.27 % the Adjusted $R^2$ has improved to 71.1%.
+
+### Performing Model Diagnostics 
+
+#### a) Checking for Unusual Observations : 
+
+**1.Checking for the presence of high leverage points** 
+
+First let us check for the presence of high leverage points in the dataset.
+
+```{r}
+n=dim(crime)[1]; # sample size
+p=14; # predictors plus intercept
+
+
+
+# Compute Leverages
+lev=influence(model.lm.red)$hat
+
+# Determine which exceed the 2p/n threshold
+newlev = lev[lev>2*p/n]
+length(newlev)
+length(newlev)/n
+
+# Prepare a half-normal plot 
+halfnorm(lev, ylab="Leverages")
+```
+
+Observations 18 and 37 are high leverage points. Whether they are good or bad is yet to be decided. 
+
+**2.Checking for the presence of outliers** 
+
+```{r}
+jackknife=rstudent(model.lm.red)
+n = dim(crime)[1]
+p = 14
+x=qt(.05/(2*n), n-p-1) #Significance level adjusted with Bonferroni's Correction
+x
+sort(abs(jackknife),decreasing =T)[1:10]
+```
+
+We can see that there are no outliers in the dataset i.e there are no studentized residual values that are higher (in absolute value) of the critical T distribution value with Bonferroni's correction.
+
+**3.Checking for the presence of High Influential Points**
+
+
+To detect high influential points, let's check the cook's distance for our model 
+
+```{r}
+cook = cooks.distance(model.lm.red)
+# Extract max Cook's Distance
+max(cook)
+halfnorm(cook, 6, labs=as.character(1:length(cook)), ylab="Cook's distances")
+```
+
+From the outputs above, we can see that there no datapoints with a Cook's distance higher than 1. So, by this rule of thumb we can conclude that there are no high influential points . 
+
+
+#### b) Checking for Model Assumptions : 
+
+
+We also need to see if there are any of the assumptions of our model are being violated.
+
+**1. Checking the constant variance assumption (Homoscedasticity) **
+
+Let's check if the residuals have constant variance wrt the fitted values in our model 
+
+```{r}
+plot(model.lm.red, which=1)
+
+```
+
+We can see that the residuals are more or less randomly distributed from the straight line suggesting that the variance is constant. We can confirm this by performing the Breusch-Pagan test for heteroskedasticity. 
+
+```{r}
+bptest(model.lm.red)
+```
+The above test checks the below hypotheses : <br>
+
+\[\begin{cases}
+&H_0: \text{Errors have constant variance}\\
+&H_{\alpha}: \text{Errors have non-constant variance}\
+
+\end{cases}\]
+
+Since p-value of the test is greater than our significance level of 0.05 , we fail to reject $H_0$ and conclude that the error variance is constant. 
+
+
+**2.Checking the normality of errors assumption **
+
+Let's check if the errors in our model are normally distributed around a mean of zero. 
+For that, we need to look at the histogram of the residuals as well as the Q-Q plot . 
+```{r}
+hist(model.lm.red$residuals, breaks = 10)
+```
+
+
+```{r}
+plot(model.lm.red,which = 2)
+```
+
+
+The residuals looks more or less normal from the histogram and the Q-Q plot is also a straight line. The number of observations are less than 50 ( Number of rows in the dataset). So in order to test for normality let's perform the Shapiro Wilk's test.
+
+```{r}
+shapiro.test(model.lm.red$residuals)
+```
+The above test checks the below hypotheses : <br>
+
+\[\begin{cases}
+&H_0: \text{Errors are normally distributed }\\
+&H_{\alpha}: \text{Errors are not normally distributed}\
+
+\end{cases}\]
+
+Since p-value of the test is greater than our significance level of 0.05 , we fail to reject $H_0$ and conclude that the errors are normally distributed. 
+
+
+**3.Checking the linearity assumption**
+
+We can check linearity from the added variable plots of our model
+
+
+```{r}
+
+avPlots(model.lm.red)
+```
+
+
+For all the predictors, the added variable plot suggests that the residuals are scattered around a straight line and therefore linearity condition is satisfied and we don't need to transform any predictor. 
+
+
+## Selecting the Best Model based on prediction accuracy
+
+### Train Test Split  
+
+Till now we were checking whether the model assumptions are met and whether there are any unusual points in our dataset. Now our task is select the "best" model to predict the Crime Rate. In order to do that we must first divide our model into two parts -<br>
+a) Train - For training our model <br>
+b) Test - For testing our model and deriving the prediction accuracy (or prediction error) <br>
+
+Before dividing our dataset, let's drop the two columns from the dataset that we identified were contributing to multicollinearity (`Po2` and `Wealth`)
+
+```{r}
+
+drop <- c('Po2','Wealth')
+crime.new = crime[,!(names(crime) %in% drop)]
+names(crime.new)
+```
+
+Now let's split our dataset randomly in 70-30 proportion into train and test respectively
+
+
+
+```{r}
+# Fix the seed
+set.seed(425) 
+
+# Train & Test data sets
+train_index = sample(seq_len(nrow(crime.new)), size=floor(0.7*nrow(crime.new)))
+train = crime.new[train_index,]
+test = crime.new[-train_index,]
+
+dim(train)
+dim(test)
+
+```
+So there are 32 rows in train and 15 rows in test. 
+
+
+### Fitting a linear model on the training set and obtaining the training and testing errors 
+
+Let's start with a linear model to get the train test errors
+
+```{r}
+lm.crime = lm(Crime ~., data=train)
+summary(lm.crime)
+```
+We have a great $R^2$ of 86% and adjusted $R^2$ of 76%. 
+
+Let's obtain the Train and Test Root Mean Squared Error (RMSE) for the linear model.
+
+```{r}
+lm.train = predict(lm.crime, newdata=train[,-14])
+lm.test = predict(lm.crime, newdata=test[,-14])
+
+lm.train.rmse<- rmse(train$Crime, lm.train)
+lm.test.rmse<- rmse(test$Crime, lm.test) 
+
+print(paste("Linear Model Train RMSE : ",lm.train.rmse))
+print(paste("Linear Model Test RMSE : ",lm.test.rmse))
+```
+### Fitting a linear model  based on the optimal predictors obtained from the **step algorithm** 
+
+Let's use the step algorithm and the AIC criteria to select the best set of predictors in our model which would reduce overfitting and should provide better prediction accuracy. 
+
+**Forward Selection** 
+
+```{r}
+intercept_only <- lm(Crime ~ 1, data=train )
+forward<- step(intercept_only, direction='forward', scope=formula(lm.crime), trace=0)
+
+forward$anova
+forward
+mod_var_name='forward'
+assign(mod_var_name,model)
+model_name='forward Selection Linear Model'
+
+pr.train = predict(model, newdata=train[,-14])
+pr.test = predict(model, newdata=test[,-14])
+
+pr.train.rmse<- rmse(train$Crime, pr.train)
+pr.test.rmse<- rmse(test$Crime, pr.test) 
+
+assign(paste0(mod_var_name,'.train.rmse'),pr.train.rmse)
+assign(paste0(mod_var_name,'.test.rmse'),pr.test.rmse)
+print(paste(model_name," Train RMSE : ",pr.train.rmse))
+print(paste(model_name," Test RMSE : ",pr.test.rmse))
+```
+
+The model selected by the forward selection is the same as our linear model `lm.crime`. 
+
+**Backward Selection**
+
+```{r}
+step(lm.crime, direction="backward")
+```
+
+Let's fit the linear model suggested by the backward elimination model and compute the Train and test RMSE .
+
+```{r}
+back.lm.crime<-lm(formula = Crime ~ So + Ed + Po1 + M.F + Ineq + Time, data = train)
+summary(back.lm.crime)
+```
+```{r}
+mod_var_name='back.lm.crime'
+assign(mod_var_name,model)
+model_name='Backward Selection Linear Model'
+
+pr.train = predict(model, newdata=train[,-14])
+pr.test = predict(model, newdata=test[,-14])
+
+pr.train.rmse<- rmse(train$Crime, pr.train)
+pr.test.rmse<- rmse(test$Crime, pr.test) 
+
+assign(paste0(mod_var_name,'.train.rmse'),pr.train.rmse)
+assign(paste0(mod_var_name,'.test.rmse'),pr.test.rmse)
+print(paste(model_name," Train RMSE : ",pr.train.rmse))
+print(paste(model_name," Test RMSE : ",pr.test.rmse))
+```
+
+**Both Ways Selection**
+
+
+```{r}
+step(lm.crime, direction="both")
+```
+
+The bothways selection using the step algorithm has yielded the same model as backward selection. 
+
+### Fitting a linear model  based on the optimal predictors obtained from the **Adjusted $R^2$ Criterion** 
+
+We can use the regsubsets function in R to determine the optimal number of predictors using different criteria.
+
+```{r}
+crime.subsets = regsubsets(Crime ~ ., data=train, nvmax = ncol(train)-1)
+crime.subsets.summary = summary(crime.subsets)
+
+n = dim(train)[1]
+msize = 2:ncol(train)
+
+par(mfrow=c(2,2))
+plot(msize, crime.subsets.summary$adjr2, xlab="No. of Parameters", ylab = "Adjusted Rsquare") 
+Aic = n*log(crime.subsets.summary$rss/n) + 2*msize; 
+plot(msize, Aic, xlab="No. of Parameters", ylab = "AIC"); 
+Bic = n*log(crime.subsets.summary$rss/n) + msize*log(n); 
+plot(msize, Bic, xlab="No. of Parameters", ylab = "BIC")
+plot(msize, crime.subsets.summary$cp, xlab="No. of Parameters", ylab = "Mallow's Cp")
+```
+
+Let's look at Adj. $R^2$ as our first criterion. The number of columns and the column set which gives the highest adjusted $R^2$  is given below : 
+
+```{r}
+which.max(crime.subsets.summary$adjr2)
+#crime.subsets.summary$which[which.max(crime.subsets.summary$adjr2), ]
+rs<-crime.subsets.summary
+colnames(rs$which)[rs$which[which.max(rs$adjr2),]][-1]
+```
+
+Let's fit the model using the suggested columns and get the training and testing RMSE. 
+
+
+```{r}
+
+
+col=colnames(rs$which)[rs$which[which.max(rs$adjr2),]][-1]
+train.adjR = train[,c('Crime',col)]
+test.adjR = test[,c('Crime',col)]
+
+crime.adjR = lm(Crime ~ ., data = train.adjR)
+summary(crime.adjR)
+
+ptrain.adjR = predict(crime.adjR, newdata=train.adjR)
+ptest.adjR = predict(crime.adjR, newdata=test.adjR)
+
+adjr.lm.train.rmse<-sqrt(mean((train$Crime - ptrain.adjR)^2))
+adjr.lm.test.rmse<-sqrt(mean((test$Crime - ptest.adjR)^2))
+
+print(paste("Optimal  Model wrt Adj R2 Train RMSE : ",adjr.lm.train.rmse))
+print(paste("Optimal  Model wrt Adj R2 Test RMSE : ",adjr.lm.test.rmse))
+
+```
+### Fitting a linear model  based on the optimal predictors obtained from the **AIC Criterion** 
+
+```{r}
+
+col = colnames(rs$which)[rs$which[which.min(Aic),]][-1]
+
+col
+train.aic = train[,c('Crime',col)]
+test.aic = test[,c('Crime',col)]
+
+crime.aic = lm(Crime ~ ., data = train.aic)
+summary(crime.aic)
+ptrain.aic = predict(crime.aic, newdata=train.aic)
+ptest.aic = predict(crime.aic, newdata=test.aic)
+
+aic.lm.train.rmse<-sqrt(mean((train$Crime - ptrain.aic)^2))
+aic.lm.test.rmse<-sqrt(mean((test$Crime - ptest.aic)^2))
+
+print(paste("Optimal  Model wrt AIC Train RMSE : ",aic.lm.train.rmse))
+print(paste("Optimal  Model wrt AIC Test RMSE : ",aic.lm.test.rmse))
+
+
+```
+AIC yields the same set of optimal predictors as Adjusted $R^2$ and therefore has the same train and test RMSE.  
+
+
+### Fitting a linear model  based on the optimal predictors obtained from the **BIC Criterion** 
+
+```{r}
+col = colnames(rs$which)[rs$which[which.min(Bic),]][-1]
+
+col
+train.bic = train[,c('Crime',col)]
+test.bic = test[,c('Crime',col)]
+
+crime.bic = lm(Crime ~ ., data = train.bic)
+
+summary(crime.bic)
+ptrain.bic = predict(crime.bic, newdata=train.bic)
+ptest.bic = predict(crime.bic, newdata=test.bic)
+
+bic.lm.train.rmse<-sqrt(mean((train$Crime - ptrain.bic)^2))
+bic.lm.test.rmse<-sqrt(mean((test$Crime - ptest.bic)^2))
+
+print(paste("Optimal  Model wrt BIC Train RMSE : ",bic.lm.train.rmse))
+print(paste("Optimal  Model wrt BIC Test RMSE : ",bic.lm.test.rmse))
+
+```
+
+We can observe for BIC that due to a smaller number of predictors the Train RMSE has increased but the Test RMSE has reduced slightly as compared to AIC and Adjusted $R^2$.
+
+### Fitting a linear model  based on the optimal predictors obtained from the **Mallow's $C_p$ Criterion** 
+
+```{r}
+col=colnames(rs$which)[rs$which[which.min(rs$cp),]][-1]
+train.cp = train[,c('Crime',col)]
+test.cp = test[,c('Crime',col)]
+
+crime.cp = lm(Crime ~ ., data = train.cp)
+summary(crime.cp)
+
+ptrain.cp = predict(crime.cp, newdata=train.cp)
+ptest.cp = predict(crime.cp, newdata=test.cp)
+
+cp.lm.train.rmse<-sqrt(mean((train$Crime - ptrain.cp)^2))
+cp.lm.test.rmse<-sqrt(mean((test$Crime - ptest.cp)^2))
+
+print(paste("Optimal  Model wrt Mallow's Cp Train RMSE : ",cp.lm.train.rmse))
+print(paste("Optimal  Model wrt Mallow's Cp Test RMSE : ",cp.lm.test.rmse))
+
+```
+
+We obtain the same set of predictors as the one we obtain from AIC and Adjusted $R^2$. 
+
+
+### Fitting a **Ridge regression model** and reporting the training and testing errors
+
+
+Now we will use 10 fold cross validation to find the optimal parameter $\lambda$ to fit the ridge regression model. 
+
+```{r}
+library(glmnet)
+set.seed(425)
+xtrain = model.matrix(Crime ~ ., data = train)[,-1]
+#head(xtrain)
+ytrain = train$Crime 
+xtest = model.matrix(Crime ~ ., data = test)[,-1]
+ytest = test$Crime 
+
+grid =  10^seq(1,2, length = 10000)
+mod.ridge = cv.glmnet(xtrain, ytrain, alpha=0, lambda=grid,nfold=10)
+lambda.best = mod.ridge$lambda.min
+mod.ridge
+
+
+model_ridge_best <- glmnet(y = ytrain,
+                           x = xtrain,
+                           alpha = 0, 
+                           lambda =  lambda.best,nfold=10)
+
+
+
+
+
+```
+The optimal value of $\lambda$ is 25.69. 
+
+
+
+Let's check the Minimum cross validation error from the different iterations. 
+```{r}
+sqrt(min(mod.ridge$cvm))
+```
+Finally, let's report the train and test RMSE from the ridge regression 
+
+```{r}
+ridge_train_pred <- predict(model_ridge_best, s =  lambda.best, newx = xtrain)
+ridge_test_pred <- predict(model_ridge_best, s =  lambda.best, newx = xtest)
+
+ridge_train_mse <- sqrt(mean((ridge_train_pred - train$Crime)^2))
+ridge_test_mse <- sqrt(mean((ridge_test_pred - test$Crime)^2))
+
+print(paste("Ridge Regression Train RMSE ",ridge_train_mse))
+print(paste("Ridge Regression Test RMSE ",ridge_test_mse))
+```
+
+### Fitting a **Lasso regression model** and reporting the training and testing errors
+
+Similar to ridge regression let's predict the crime rate using Lasso and check the training and testing RMSE. 
+
+```{r}
+set.seed(425)
+grid =  10^seq(-2,1, length = 100000)
+mod.lasso = cv.glmnet(xtrain, ytrain, alpha=1, lambda=grid,nfold=10)
+lambda.best = mod.lasso$lambda.min
+mod.lasso
+
+
+model_lasso_best <- glmnet(y = ytrain,
+                           x = xtrain,
+                           alpha = 1, 
+                           lambda =  lambda.best,nfold=10)
+
+
+plot(mod.lasso)
+
+
+```
+
+
+The optimal value of lambda is 4.072. Let's check the minimu Cross validation error for the Lasso Regression model. 
+
+```{r}
+sqrt(min(mod.lasso$cvm))
+```
+
+
+Finally, let's find out the Training and Test RMSE for Lasso Regression 
+
+```{r}
+lasso_train_pred <- predict(model_lasso_best, s =  lambda.best, newx = xtrain)
+lasso_test_pred <- predict(model_lasso_best, s =  lambda.best, newx = xtest)
+
+lasso_train_rmse <- sqrt(mean((lasso_train_pred - train$Crime)^2))
+lasso_test_rmse <- sqrt(mean((lasso_test_pred - test$Crime)^2))
+
+print(paste("Lasso Regression Train RMSE ",lasso_train_rmse))
+print(paste("Lasso Regression Test RMSE ",lasso_test_rmse))
+
+
+```
+### Fitting a **Principal Components Regression (PCR) model** and reporting the training and testing errors
+
+```{r}
+library(pls)
+set.seed(425)
+
+model.pcr = pcr(Crime ~., data=train, validation="CV")
+plot(RMSEP(model.pcr, estimate="CV"))
+
+```
+
+Let's find the number of components which results in the min RMSE 
+
+```{r}
+M = which.min(RMSEP(model.pcr, estimate="CV")$val)
+M
+```
+
+So there are 9 principal components (10 including intercept ) in the model which gives the least cross validation RMSE. Let's find out that minimum CV. 
+
+```{r}
+min(RMSEP(model.pcr, estimate="CV")$val)
+
+```
+
+Finally, let's find out the training and testing RMSE for the PCR Model 
+
+```{r}
+ptrain.pcr = predict(model.pcr, train, ncomp=9)
+ptest.pcr = predict(model.pcr, test, ncomp=9)
+
+
+
+pcr_train_rmse <- sqrt(mean((ptrain.pcr - train$Crime)^2))
+pcr_test_rmse <- sqrt(mean((ptest.pcr - test$Crime)^2))
+
+print(paste("PCR Train RMSE ",pcr_train_rmse))
+print(paste("PCR Test RMSE ",pcr_test_rmse))
+
+```
+
+## Final Summary of all models 
+
+Let us summarise the prediction RMSE from all the models considered in the form of a visualisation 
+
+```{r}
+
+mod_names<-c('Linear Regression','Forward Selection','Backward Selection','Both Ways Selection','Adjuster R2','AIC','BIC',"Mallow's Cp",'Ridge Regression','Lasso Regression','PCR')
+  
+mod_rmse<-c(lm.test.rmse,forward.test.rmse,back.lm.crime.test.rmse,back.lm.crime.test.rmse,adjr.lm.test.rmse,aic.lm.test.rmse,bic.lm.test.rmse,cp.lm.test.rmse,ridge_test_mse,lasso_test_rmse,pcr_test_rmse)
+
+plot(mod_rmse)
+
+```
+
+We  can see that the model selected by Forward/Backward and Both ways selection is the best model in terms of prediction accuracy i.e. the model has the lowest prediction error. So we will finalise that model to predict the crime rate for different counties.
